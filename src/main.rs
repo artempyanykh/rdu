@@ -1,10 +1,14 @@
-use std::{env, error::Error, io, path::PathBuf};
+use std::{env, error::Error, fs::Metadata, io, path::PathBuf};
 
 use clap::{crate_authors, crate_version, Clap};
 
 use humansize::{file_size_opts, FileSize};
 
 use tokio::fs;
+
+use tokio_stream::wrappers::ReadDirStream;
+
+use futures::{select, stream::FuturesUnordered, StreamExt};
 
 #[derive(Clap)]
 #[clap(version = crate_version!(), author = crate_authors!())]
@@ -30,24 +34,43 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 
 async fn calc_space_usage(path: PathBuf) -> Result<u64, io::Error> {
-    let mut meta_queue = vec![path];
+    let mut meta_queue = FuturesUnordered::new();
+    meta_queue.push(meta_with_path(path));
+
+    let mut entry_queue = FuturesUnordered::new();
+
     let mut size = 0;
 
-    while let Some(path) = meta_queue.pop() {
-        let meta = fs::symlink_metadata(&path).await?;
-        let file_type = meta.file_type();
+    loop {
+        select! {
+            resolved = meta_queue.select_next_some() => {
+                let (path, meta) = resolved?;
+                let file_type = meta.file_type();
 
-        if file_type.is_symlink() {
-            // don't follow symlinks
-        } else if file_type.is_dir() {
-            let mut entries = fs::read_dir(&path).await?;
-            while let Some(entry) = entries.next_entry().await? {
-                meta_queue.push(entry.path());
+                if file_type.is_symlink() {
+                    // don't follow symlinks
+                } else if file_type.is_dir() {
+                    let entries = fs::read_dir(&path).await?;
+                    let entry_stream = ReadDirStream::new(entries);
+                    entry_queue.push(entry_stream.into_future());
+                } else if file_type.is_file() {
+                    size += meta.len();
+                }
+            },
+            (entry, tail) = entry_queue.select_next_some() => {
+                if let Some(Ok(entry)) = entry {
+                    entry_queue.push(tail.into_future());
+                    meta_queue.push(meta_with_path(entry.path()));
+                }
             }
-        } else if file_type.is_file() {
-            size += meta.len();
+            complete => break,
         }
     }
 
     Ok(size)
+}
+
+async fn meta_with_path(path: PathBuf) -> io::Result<(PathBuf, Metadata)> {
+    let meta = fs::symlink_metadata(&path).await?;
+    Ok((path, meta))
 }
