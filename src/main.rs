@@ -4,11 +4,9 @@ use clap::{crate_authors, crate_version, Clap};
 
 use humansize::{file_size_opts, FileSize};
 
-use tokio::fs;
+use tokio::{fs, runtime};
 
-use tokio_stream::wrappers::ReadDirStream;
-
-use futures::{select, stream::FuturesUnordered, StreamExt};
+use futures::{stream::FuturesUnordered, TryStreamExt};
 
 #[derive(Clap)]
 #[clap(version = crate_version!(), author = crate_authors!())]
@@ -18,8 +16,12 @@ struct Opts {
     dir: Option<PathBuf>,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> Result<(), Box<dyn Error>> {
+    let rt = runtime::Runtime::new()?;
+    rt.block_on(main_entry())
+}
+
+async fn main_entry() -> Result<(), Box<dyn Error>> {
     let opts = Opts::parse();
     let start_dir = match opts.dir {
         Some(dir) => dir,
@@ -37,33 +39,21 @@ async fn calc_space_usage(path: PathBuf) -> Result<u64, io::Error> {
     let mut meta_queue = FuturesUnordered::new();
     meta_queue.push(meta_with_path(path));
 
-    let mut entry_queue = FuturesUnordered::new();
-
     let mut size = 0;
 
-    loop {
-        select! {
-            resolved = meta_queue.select_next_some() => {
-                let (path, meta) = resolved?;
-                let file_type = meta.file_type();
+    while let Some((path, meta)) = meta_queue.try_next().await? {
+        let file_type = meta.file_type();
 
-                if file_type.is_symlink() {
-                    // don't follow symlinks
-                } else if file_type.is_dir() {
-                    let entries = fs::read_dir(&path).await?;
-                    let entry_stream = ReadDirStream::new(entries);
-                    entry_queue.push(entry_stream.into_future());
-                } else if file_type.is_file() {
-                    size += meta.len();
-                }
-            },
-            (entry, tail) = entry_queue.select_next_some() => {
-                if let Some(Ok(entry)) = entry {
-                    entry_queue.push(tail.into_future());
-                    meta_queue.push(meta_with_path(entry.path()));
-                }
+        if file_type.is_symlink() {
+            // don't follow symlinks
+        } else if file_type.is_dir() {
+            // This is a blocking operation!
+            for entry in std::fs::read_dir(&path)? {
+                let entry = entry?;
+                meta_queue.push(meta_with_path(entry.path()));
             }
-            complete => break,
+        } else if file_type.is_file() {
+            size += meta.len();
         }
     }
 
