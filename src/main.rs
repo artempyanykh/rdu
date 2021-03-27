@@ -1,4 +1,9 @@
-use std::{env, error::Error, path::PathBuf};
+use std::{
+    env,
+    error::Error,
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 use clap::{crate_authors, crate_version, Clap};
 
@@ -17,6 +22,26 @@ fn main() -> Result<(), Box<dyn Error>> {
         _ => env::current_dir()?,
     };
 
-    println!("Starting from {}", start_dir.display());
+    let usage = calc_space_usage(&start_dir)?;
+
+    println!("{}\t{}", usage, start_dir.display());
     Ok(())
+}
+
+fn calc_space_usage(path: &Path) -> Result<u64, io::Error> {
+    let meta = fs::metadata(&path)?;
+
+    let mut size = 0;
+
+    if meta.is_dir() {
+        let entries = fs::read_dir(&path)?;
+        for entry in entries {
+            let entry = entry?;
+            size += calc_space_usage(&entry.path())?;
+        }
+    } else {
+        size = meta.len();
+    }
+
+    Ok(size)
 }
