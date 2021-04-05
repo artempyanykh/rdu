@@ -122,3 +122,89 @@ Summary
 This time around `async-par` beats both `du` and `rdu-sync` by 2x. This makes
 sense, since `async-par` tries to do many things concurrently, however I
 expected something better than 2x.
+
+Another interesting observation is that the runtime of `async-par` doesn't
+depend on whether we purge disk caches or not. This makes it a good candidate
+in a situation when the files can be on a remote FS and need a lot of time to
+fetch metadata for.
+
+### WSL2 Linux
+
+This should be pretty close to the native Linux experience, as it's real
+Linux but it's talking to a hypervisor rather than to hardware directly.
+
+The version of the kernel is somewhat older though:
+```bash
+$ uname -r
+4.19.104-microsoft-standard
+```
+
+**With warm disk cache:**
+
+```bash
+$ hyperfine \
+  -L exe du,target/release/rdu-sync,target/release/rdu-async-seq,target/release/rdu-async-par \
+  '{exe} -hs ~/dev/rdu-test/'
+
+Benchmark #1: du -hs ~/dev/rdu-test/
+  Time (mean ± σ):     240.8 ms ±   2.0 ms    [User: 26.0 ms, System: 214.8 ms]
+  Range (min … max):   238.7 ms … 246.3 ms    12 runs
+ 
+Benchmark #2: target/release/rdu-sync -hs ~/dev/rdu-test/
+  Time (mean ± σ):     318.4 ms ±   3.3 ms    [User: 47.1 ms, System: 270.8 ms]
+  Range (min … max):   315.5 ms … 326.8 ms    10 runs
+ 
+Benchmark #3: target/release/rdu-async-seq -hs ~/dev/rdu-test/
+  Time (mean ± σ):     17.721 s ±  0.073 s    [User: 3.933 s, System: 25.006 s]
+  Range (min … max):   17.561 s … 17.809 s    10 runs
+ 
+Benchmark #4: target/release/rdu-async-par -hs ~/dev/rdu-test/
+  Time (mean ± σ):      7.019 s ±  0.019 s    [User: 3.630 s, System: 14.046 s]
+  Range (min … max):    6.981 s …  7.049 s    10 runs
+ 
+Summary
+  'du -hs ~/dev/rdu-test/' ran
+    1.32 ± 0.02 times faster than 'target/release/rdu-sync -hs ~/dev/rdu-test/'
+   29.15 ± 0.25 times faster than 'target/release/rdu-async-par -hs ~/dev/rdu-test/'
+   73.59 ± 0.68 times faster than 'target/release/rdu-async-seq -hs ~/dev/rdu-test/'
+```
+
+This is interesting: `du` and `rdu-sync` performance is consistent with
+native Linux, but `async-*` variants are devastatingly slow! 
+
+It's not clear why async performance is **so** bad here: is it WSL2 to blame?
+Or an older kernel?
+
+**With cold disk cache:**
+
+```bash
+$ hyperfine \
+  -L exe du,target/release/rdu-sync,target/release/rdu-async-seq,target/release/rdu-async-par \
+  '{exe} -hs ~/dev/rdu-test/' \
+  -p 'echo 3 | sudo tee /proc/sys/vm/drop_caches'
+
+Benchmark #1: du -hs ~/dev/rdu-test/
+  Time (mean ± σ):      4.821 s ±  0.061 s    [User: 117.0 ms, System: 1153.2 ms]
+  Range (min … max):    4.743 s …  4.924 s    10 runs
+ 
+Benchmark #2: target/release/rdu-sync -hs ~/dev/rdu-test/
+  Time (mean ± σ):      5.164 s ±  0.360 s    [User: 156.0 ms, System: 1188.7 ms]
+  Range (min … max):    4.852 s …  5.796 s    10 runs
+ 
+Benchmark #3: target/release/rdu-async-seq -hs ~/dev/rdu-test/
+  Time (mean ± σ):     23.184 s ±  0.167 s    [User: 4.039 s, System: 26.879 s]
+  Range (min … max):   22.850 s … 23.447 s    10 runs
+ 
+Benchmark #4: target/release/rdu-async-par -hs ~/dev/rdu-test/
+  Time (mean ± σ):      7.615 s ±  0.041 s    [User: 3.888 s, System: 16.854 s]
+  Range (min … max):    7.544 s …  7.657 s    10 runs
+ 
+Summary
+  'du -hs ~/dev/rdu-test/' ran
+    1.07 ± 0.08 times faster than 'target/release/rdu-sync -hs ~/dev/rdu-test/'
+    1.58 ± 0.02 times faster than 'target/release/rdu-async-par -hs ~/dev/rdu-test/'
+    4.81 ± 0.07 times faster than 'target/release/rdu-async-seq -hs ~/dev/rdu-test/'
+```
+
+Here we again see that `async-par`'s runtime doesn't change much depending on
+whether we purge disk cache or not.
