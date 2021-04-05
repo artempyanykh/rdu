@@ -208,3 +208,46 @@ Summary
 
 Here we again see that `async-par`'s runtime doesn't change much depending on
 whether we purge disk cache or not.
+
+### Native Windows 10
+
+```
+Edition	Windows 10 Pro
+Version	20H2
+Installed on	‎14/‎07/‎2020
+OS build	19042.867
+Experience	Windows Feature Experience Pack 120.2212.551.0
+```
+
+There's no `du` on Windows and I don't know how to clear disk cache on
+Windows, so we run a limited set of benchmarks.
+
+```ps1
+hyperfine -L exe .\target\release\rdu-sync.exe,.\target\release\rdu-async-seq.exe,.\target\release\rdu-async-par.exe '{exe} -hs ..\rdu-test'
+
+hyperfine -L exe .\target\release\rdu-sync.exe,.\target\release\rdu-async-seq.exe,.\target\release\rdu-async-par.exe '{exe} -hs ..\rdu-test'
+Benchmark #1: .\target\release\rdu-sync.exe -hs ..\rdu-test
+  Time (mean ± σ):      4.780 s ±  0.038 s    [User: 2.8 ms, System: 4.1 ms]
+  Range (min … max):    4.736 s …  4.860 s    10 runs
+
+Benchmark #2: .\target\release\rdu-async-seq.exe -hs ..\rdu-test
+  Time (mean ± σ):     10.561 s ±  0.066 s    [User: 2.8 ms, System: 2.7 ms]
+  Range (min … max):   10.443 s … 10.644 s    10 runs
+
+Benchmark #3: .\target\release\rdu-async-par.exe -hs ..\rdu-test
+  Time (mean ± σ):      3.308 s ±  0.016 s    [User: 1.4 ms, System: 4.1 ms]
+  Range (min … max):    3.283 s …  3.340 s    10 runs
+
+Summary
+  '.\target\release\rdu-async-par.exe -hs ..\rdu-test' ran
+    1.45 ± 0.01 times faster than '.\target\release\rdu-sync.exe -hs ..\rdu-test'
+    3.19 ± 0.03 times faster than '.\target\release\rdu-async-seq.exe -hs ..\rdu-test'
+```
+
+A very-very different picture on Windows. The blocking version is quite slow!
+Looks like there are no optimizations in Windows to speed up this type of
+operations, compared to Linux. (Perhaps somebody who knows Windows IO better
+could shed light on this?)
+
+`async-seq` variant is still quite slow, but `async-par` seems to be the best
+option on Linux despite the increased code complexity.
