@@ -12,3 +12,4 @@ humansize = "1.1.0"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1.5", features = ["fs"] }
 futures = "0.3.13"
+async-recursion = "0.3"
